@@ -59,8 +59,6 @@ class OCPostgreSqlPlatformTest extends \Test\TestCase {
 			$sqlStatements,
 			true
 		);
-		
-		var_dump($sqlStatements);
 	}
 	
 	protected function createTableAndColumn($schema, $type){
