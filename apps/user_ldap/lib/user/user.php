@@ -25,6 +25,7 @@
 
 namespace OCA\user_ldap\lib\user;
 
+use OC\Cache\CappedMemoryCache;
 use OCA\user_ldap\lib\user\IUserTools;
 use OCA\user_ldap\lib\Connection;
 use OCA\user_ldap\lib\FilesystemHelper;
@@ -89,6 +90,11 @@ class User {
 	protected $avatarImage;
 
 	/**
+	 * @var CappedMemoryCache
+	 */
+	protected $refreshCache;
+
+	/**
 	 * DB config keys for user preferences
 	 */
 	const USER_PREFKEY_FIRSTLOGIN  = 'firstLoginAccomplished';
@@ -127,6 +133,7 @@ class User {
 		$this->log           = $log;
 		$this->avatarManager = $avatarManager;
 		$this->userManager   = $userManager;
+		$this->refreshCache  = new CappedMemoryCache();
 	}
 
 	/**
@@ -353,8 +360,11 @@ class User {
 	 * @return null
 	 */
 	public function markRefreshTime() {
+		// Also save this refresh time in the cache to avoid relying on the DB in clustered environments
+		$now = time();
+		$this->refreshCache->set($this->uid.'-'.self::USER_PREFKEY_LASTREFRESH, $now);
 		$this->config->setUserValue(
-			$this->uid, 'user_ldap', self::USER_PREFKEY_LASTREFRESH, time());
+			$this->uid, 'user_ldap', self::USER_PREFKEY_LASTREFRESH, $now);
 	}
 
 	/**
@@ -364,8 +374,13 @@ class User {
 	 * @return bool
 	 */
 	private function needsRefresh() {
-		$lastChecked = $this->config->getUserValue($this->uid, 'user_ldap',
-			self::USER_PREFKEY_LASTREFRESH, 0);
+		// See if we can get the value from the cache instead of the DB
+		$lastRefresh = $this->refreshCache->get($this->uid.'-'.self::USER_PREFKEY_LASTREFRESH);
+		if($lastRefresh === null) {
+			// Then we dont have this cached, check the DB
+			$lastChecked = $this->config->getUserValue($this->uid, 'user_ldap',
+				self::USER_PREFKEY_LASTREFRESH, 0);
+		}
 
 		//TODO make interval configurable
 		if((time() - intval($lastChecked)) < 86400 ) {
