@@ -34,6 +34,7 @@ use OC\Lock\DBLockingProvider;
 use OCP\Files\Storage\IStorage;
 use OCP\Files\StorageNotAvailableException;
 use OCP\ILogger;
+use OC\Repair\RepairMismatchFileCachePath;
 
 /**
  * Class Scanner
@@ -177,9 +178,10 @@ class Scanner extends PublicEmitter {
 
 	/**
 	 * @param string $dir
+	 * @param bool $shouldRepair whether to repair detached cache entries
 	 * @throws \OC\ForbiddenException
 	 */
-	public function scan($dir = '') {
+	public function scan($dir = '', $shouldRepair = false) {
 		if (!Filesystem::isValidPath($dir)) {
 			throw new \InvalidArgumentException('Invalid path to scan');
 		}
@@ -196,7 +198,8 @@ class Scanner extends PublicEmitter {
 			}
 
 			// if the home storage isn't writable then the scanner is run as the wrong user
-			if ($storage->instanceOfStorage('\OC\Files\Storage\Home') and
+			$isHome = $storage->instanceOfStorage('\OC\Files\Storage\Home');
+			if ($isHome and
 				(!$storage->isCreatable('') or !$storage->isCreatable('files'))
 			) {
 				if ($storage->file_exists('') or $storage->getCache()->inCache('')) {
@@ -211,6 +214,9 @@ class Scanner extends PublicEmitter {
 			if ($storage->instanceOfStorage('OCA\Files_Sharing\ISharedStorage')) {
 				continue;
 			}
+
+			$this->emit('\OC\Files\Utils\Scanner', 'beforeScanStorage', [$storage]);
+
 			$relativePath = $mount->getInternalPath($dir);
 			$scanner = $storage->getScanner();
 			$scanner->setUseTransactions(false);
@@ -247,6 +253,7 @@ class Scanner extends PublicEmitter {
 			if ($this->useTransaction) {
 				$this->db->commit();
 			}
+			$this->emit('\OC\Files\Utils\Scanner', 'afterScanStorage', [$storage]);
 		}
 	}
 

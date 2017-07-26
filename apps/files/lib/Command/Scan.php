@@ -39,6 +39,8 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Helper\Table;
+use OC\Repair\RepairMismatchFileCachePath;
+use OC\Migration\ConsoleOutput;
 
 class Scan extends Base {
 
@@ -90,6 +92,12 @@ class Scan extends Base {
 				null,
 				InputOption::VALUE_NONE,
 				'will rescan all files of all known users'
+			)
+			->addOption(
+				'repair',
+				null,
+				InputOption::VALUE_NONE,
+				'will repair detached filecache entries (slow)'
 			)->addOption(
 				'unscanned',
 				null,
@@ -107,9 +115,22 @@ class Scan extends Base {
 		}
 	}
 
-	protected function scanFiles($user, $path, $verbose, OutputInterface $output, $backgroundScan = false) {
+	protected function scanFiles($user, $path, $verbose, OutputInterface $output, $backgroundScan = false, $shouldRepair = false) {
 		$connection = $this->reconnectToDatabase($output);
 		$scanner = new \OC\Files\Utils\Scanner($user, $connection, \OC::$server->getLogger());
+		if ($shouldRepair) {
+			$scanner->listen('\OC\Files\Utils\Scanner', 'beforeScanStorage', function ($storage) use ($output, $connection) {
+				// TODO: use DI
+				$repairStep = new RepairMismatchFileCachePath(
+					$connection,
+					\OC::$server->getMimeTypeLoader()
+				);
+				$repairStep->setStorageNumericId($storage->getCache()->getNumericStorageId());
+				$repairStep->setCountOnly(false);
+				$repairStep->run(new ConsoleOutput($output));
+			});
+		}
+
 		# check on each file/folder if there was a user interrupt (ctrl-c) and throw an exception
 		# printout and count
 		if ($verbose) {
@@ -156,7 +177,7 @@ class Scan extends Base {
 			if ($backgroundScan) {
 				$scanner->backgroundScan($path);
 			}else {
-				$scanner->scan($path);
+				$scanner->scan($path, $shouldRepair);
 			}
 		} catch (ForbiddenException $e) {
 			$output->writeln("<error>Home storage for user $user not writable</error>");
@@ -225,7 +246,7 @@ class Scan extends Base {
 				if ($verbose) {$output->writeln(""); }
 				$output->writeln("Starting scan for user $user_count out of $users_total ($user)");
 				# full: printout data if $verbose was set
-				$this->scanFiles($user, $path, $verbose, $output, $input->getOption('unscanned'));
+				$this->scanFiles($user, $path, $verbose, $output, $input->getOption('unscanned'), $input->getOption('repair'));
 			} else {
 				$output->writeln("<error>Unknown user $user_count $user</error>");
 			}
